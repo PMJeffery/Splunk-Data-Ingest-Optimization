@@ -2,22 +2,26 @@
 Splunk Data Ingest Reduction
 =========================================
 
+Read this document in its entirely before proceeding to reduce data ingest.
+Failing to understand why, when, what and how to reduce data ingest can lead to failed compliance audits, termination of employment, loss of business, legal action, loss of data and Splunk Apps, Reports and Dashboard to not function.
+You have been warned!!
+
 Learn how to:
 
+* Identify what data to reduce
 * Reduce common data sources coming into Splunk such as Windows Event Logs, Linux Events, Network Syslog
 * Methods for reducing data by turning on/off inputs and programmatically
+* Validate that reduction is happening
 * Setting better retention policies for Indexes
 
-Read this document in its entirely before proceeding to reduce data ingest.
-Failing to understand why, when, what and how to reduce data ingest can lead to failed compliance audits, termination of employment, loss of data and Splunk Apps, Reports and Dashboard to not function.
-You have been warned!!
+
 
 
 =========================================
 Precautions:
 =========================================
 
-1. Removing data prior to ingestion will raise eyebrows with compliance auditors and has a very high potential to fail compliance audits.
+1. Removing data prior to ingestion will raise eyebrows and increase blood pressure with compliance auditors and has a very high potential to fail compliance audits.
 2. **Document all data removal reasons.**  Include the data source, reason for removal and have official signatures by accountable stakeholders.
 
 **NOTIONAL EXAMPLE**
@@ -30,7 +34,7 @@ Precautions:
 
 * **Reason:** These are benign, normal firewall events, high volume, requires large amounts of storage and not required for Security use cases
 
-* **Risk(s):** None.
+* **Risk(s):** DNS queries to Google DNS servers to malicious sites/services may still occur.  DNS Server logs are being ingested to Splunk to ensure proper monitoring, reporting and alerting
 
 * **Signatures:** <insert Employee names, email addresses and date of signatures>
 
@@ -59,13 +63,13 @@ Reasons for Data Reduction
 Methodologies for Determining what Data Events are Required or Necessary
 ===========================================================================
 
-**Validate inputs.conf enabled settings**
+**1. Validate inputs.conf enabled settings**
 #1 cause for exessive data ingest is data inputs that are enabled that shouldn't be - **so do this first!!**
 * Review inputs.conf to see what data is being pushed to Splunk.
 * Be absolutely sure the inputs are enabled/disabled as required or needed
 * Splunk Source Types can be split during ingestion, so verify by looking at the props.conf.  This is common for network syslog and API inputs.
 
-**Validate what Source Type are being sent to Splunk by Host and Index:**
+**2. Validate what Source Types are being sent to Splunk by Host and Index:**
 
 .. code-block:: powershell
     
@@ -73,11 +77,22 @@ Methodologies for Determining what Data Events are Required or Necessary
     
 .. image:: https://user-images.githubusercontent.com/20860518/128613065-3a092b46-d33b-48c1-95a2-b0a56f3139a1.png
     
-**Practically all Compliance Frameworks dictate what data is required/needed with a few web searches**
+**3. Practically all Compliance Frameworks dictate what data is required/needed with a few web searches**
 
-**Understand your organization's records management policy - retention length**
+**4. Understand your organization's records management policy - retention length**
 * For Security and Compliance reasons, the vast majority of them require at least 1 year's worth of relevant data.
 * Separate out your indexes based on retention lengths and access control (see Index Retention Settings below)
+
+**5. Do simple Splunk statistical searches against your logs to help identify which events are needed.**
+
+Example SPL:
+
+Windows Event Logs: | stats count by EventCode, EventCodeDescription | sort -count
+
+Firewall Logs: dest_port=53 | stats count by dest_ip | sort -count
+
+General Logs: | stats count by message | sort -count
+
 
 ===========================================================================
 How does Programmatic Data Reduction work in Splunk?
@@ -89,6 +104,59 @@ How does Programmatic Data Reduction work in Splunk?
 * UF has limitations where it does not do Pre-event filtering, Event routing and Event Parsing* https://docs.splunk.com/Documentation/Splunk/8.2.1/Forwarding/Typesofforwarders#Forwarder_comparison
 * HF must be used for network syslog and API data inputs filtering/removal.
 * Avoid having the Indexers do any removal of data as it can be computational expensive with high velocity data and thus degrading Indexer performance.
+* Once data is indexed it cannot be truely deleted unless the entire index is first deleted and the data re-ingested. 
+
+
+Super quick primer on "sed":
+
+* sed is a *nix command that is basically way to find text and optionally to do substitutions like "find and replace".
+
+
+SEDCMD is broken down into 2 major parts; before and after the '=': SEDCMD-<any text here> = s/find-this-text-with-RegEx/do-something
+
+SEDCMD can be used to accomplish at least 4 different things in Splunk:
+
+1. Remove specific text
+
+.. code-block:: powershell
+
+   SEDCMD-remove-this-text = s/^(?!(000|666|9))\d{3}-(?!00)\d{2}-(?!0000)\d{4}$//
+
+"s/" looks for a string that resembles a US Social Security Number (SSN)
+"//" deletes the text
+This is useful for deleting sensitive information contained in the Event
+
+2. Remove Whole Events
+
+.. code-block:: powershell
+
+   SEDCMD-find-8.8.8.8-remove-whole-event = s/.*8\.8\.8\.8*//
+
+"s/" looks for a string "8.8.8.8"  ".*" before and after "8.8.8.8" is RegEx to capture all characters before and after "8.8.8.8"
+"//" deletes what is in the RegEx capture
+This is useful for deleting entire events 
+
+3. Find and Replace Text
+
+.. code-block:: powershell
+
+   SEDCMD-find-SSN-replace-with-Xs = s/^(?!(000|666|9))\d{3}-(?!00)\d{2}-(?!0000)\d{4}$/xxx-xx-xxxx
+
+"s/" looks for a string that resembles a US Social Security Number (SSN)
+"/xxx-xx-xxxx" replaces "SSN" with "xxx-xx-xxxx"
+This is useful for obfuscating data 
+
+3. "Compress" Data
+
+.. code-block:: powershell
+
+   SEDCMD-compress-text = s/0x0000000000000000000/0/g
+
+"s/" looks for a string "0x0000000000000000000"
+"/0" replaces "0x0000000000000000000" with "0"
+"/g" makes the regex global and thus will find all instances 
+This is useful for compressing data... I'm look at you, Cisco Firepower logs 
+
 
 **Examples of Data Flow w/ Filtering/Removal:**
 
@@ -136,9 +204,9 @@ Screenshot Example:
 Based on the results you should be able to understand which EventCodes are coming in by volume ("count" column) and then determine which EventCodes you can keep or stop ingesting.
 Keep in mind that you can "bar napkin math" the ingest savings.  Windows events are roughly 2kb each on average.
 
-(Event Count x 1kb)/7 = estimated daily savings
+(Event Count x 2kb)/7 = estimated daily savings
 
-EventCode=4624 = 91840 Events over 7 days.  91840x2kb=183,680kb/7=26,240KB or ~26MB saved/day
+EventCode=4624 = 91840 Events over 7 days.  91840x2kb=183,680kb/7=26,240KB or ~26MB saved/day for that one specific Event Code.
 
 
 
@@ -169,7 +237,7 @@ Use the following links for more examples:
 ====================================================================================================================================================================
 Linux Log Reduction
 ====================================================================================================================================================================
-Using the UF and the Splunk_TA_nix Add-on, you can enable specific folders to monitor in real-time.  You can either explicitly list the files you want like /var/log/messages pr use RegEx and wildcards to broaden your scope.
+Using the UF and the Splunk_TA_nix Add-on, you can enable specific folders to monitor in real-time.  You can either explicitly list the files you want like /var/log/messages or use RegEx and wildcards to broaden your scope.
 
 Here are some examples:
 
@@ -185,15 +253,15 @@ If you find a lot repeat messages that you are 100% sure you do not need, then u
 Network Syslog; Firewalls specifically
 ====================================================================================================================================================================
 One of the most valuable and also the most volumous data source comes from your firewall.  Firewall syslog even for small organizations of 150 users can easily hit 20GB+/day.
-"Next-Gen" firewalls like Palo Alto, Cisco Firepower, Fortigate, etc. has much larger syslog events than a vanilla firewalls.
+"Next-Gen" firewalls like Palo Alto, Cisco Firepower, Fortigate, Sonicwall etc. have much larger syslog events than a vanilla firewalls.
 
 It is very important to ingest at least 1 weeks worth of firewall syslog to determine common, normal events that you may want to remove.
 
 **Best Practice** Send firewall syslog to a Linux Syslog Server, configure rsyslog/syslog-ng to write those to a flat file, and set your rotation policy to keep at least 1 day's
 worth of logs - 1 live real-time file and a 2nd file of the previous day's logs
-Install and configure Splunk Enterprise with the Add-on for your firewall.  Enable the Data Input to monitor that log file and tag it with the correct Sourcetype.
+Install and configure Splunk Enterprise with the Add-on for your firewall.  Enable the Data Input to monitor that log file and tag it with the correct Sourcetype. You can restart/stop the Splunk service and it will pick up where it left off since Linux Syslog is storing flat files.  You will lose data when you restart/stop the Linux server.  The use of load balancers between the firewall and multiple Linux syslog servers can be used, but outside the scope of this document.
 
-**Risky Practice**  Send Firewall syslog directly to Splunk.  Risk here is that when you restart the host or the Splunk service, during that time, all syslog data will be lost.
+**Risky Practice**  Send Firewall syslog directly to Splunk Indexer or Splunk HF.  Risk here is that when you restart the host or the Splunk service, during that time, all syslog data will be lost.
 You will need to document each time this happens and present this to the Auditor to explain the loss of data.
 
 
@@ -203,9 +271,9 @@ There are 2 distintly different ways to reduce firewall syslog volume with SEDCM
 2. "Compress" useless data within the event
 
 **Delete/NULL whole Firewall syslog events**
-A simple example would be Outbound DNS traffic on port 53.  Most internal resolvers use specified external DNS servers for forwarding requests and mobile devices will
+A simple example would be Outbound DNS traffic on port 53 and inbound DNS from designated DNS servers.  Most internal resolvers use specified external DNS servers for forwarding requests and mobile devices will
 use common DNS servers like Google (8.8.8.8, 8.8.4.4) or CloudFlare DNS servers (1.1.1.1).  By knowing what your SAFE, DESIGNATED and VETTED External DNS resolvers are, you 
-can remove those events.  Unknown, rogue or unvetted DNS servers showing up in your firewall syslog that are both ALLOWED or BLOCKED should be treated with extreme prejudice.
+can remove those events.  Unknown, rogue or unvetted DNS servers showing up in your firewall syslog that are both ALLOWED or BLOCKED should be treated with extreme prejudice and must be investigated immediately.
 
 
 Here is sample SPL for this example
@@ -220,123 +288,111 @@ Hopefully, only normal DNS servers are found.
 
 With a proper list of DNS server IPs, you can now create your SEDCMD in props.conf. 
 This must be done on the Heavy Forwarder.  For this example, we will be using a Cisco ASA and using the Splunk Add-on for Cisco ASA: https://splunkbase.splunk.com/app/1620/
-or https://docs.splunk.com/Documentation/AddOns/released/CiscoASA/Distributeddeployment
+and https://docs.splunk.com/Documentation/AddOns/released/CiscoASA/Distributeddeployment
 
 
 **These steps should be good for any network device syslog.**
-1. Install the Add-on on the appropriate Splunk Servers: https://docs.splunk.com/Documentation/AddOns/released/CiscoASA/Installationoverview
+1. Install the ASA Add-on on the appropriate Splunk Servers: https://docs.splunk.com/Documentation/AddOns/released/CiscoASA/Installationoverview
 2. Install the ASA add-on on your HF (manually or via Deployment Server)
-3. Configure the firewall to send syslog to a remote IP (Linux syslog server/Splunk HF) over UPD 514
+3. Configure the firewall to send syslog to a remote IP (Linux syslog server/Splunk HF) over UDP 514
 4. Create a new Index on your Splunk Indexer or Splunk Cloud to store your firewall syslog
 5. **Splunk Cloud Customers Only** ensure that the Splunk Cloud App is installed on your HF and it is showing up in Splunk Cloud before proceeding
 5. **On-Prem Splunk Enterprise Only** ensure that the HF is configured to send data to Splunk Indexer(s) before proceeding
 
 Read both of the following options and pick the best one.
 
-**Splunk Heavy Forwarder Configuration to monitor flat-file log writen by Linux Syslog (rsyslog/syslog-ng) ASA:**
-* **This method reduces the likelihood of data loss when the Splunk server is restarted or stopped as it is cached via Linux syslog**
+**1. Splunk Heavy Forwarder Configuration to monitor flat-file log writen by Linux Syslog (rsyslog/syslog-ng) ASA:**
+* **This method reduces the likelihood of data loss when the Splunk server is restarted or stopped as it is stored via Linux syslog**
 0. Configure Linux rsyslog/syslog-ng to accept UDP 514 syslog traffic and write it to a file
 * rsyslog: https://www.tecmint.com/install-rsyslog-centralized-logging-in-centos-ubuntu/
 * rsyslog Log Rotation: https://www.tecmint.com/manage-linux-system-logs-using-rsyslogd-and-logrotate/
 * syslog-ng: https://www.syslog-ng.com/technical-documents/doc/syslog-ng-open-source-edition/3.16/administration-guide/12#TOPIC-956429
 * syslog-ng Log Rotation: https://www.syslog-ng.com/technical-documents/doc/syslog-ng-open-source-edition/3.16/administration-guide/86
+* Example folder/file structure: 
+/var/log/sendtosplunk/firewalls/%HOSTNAME%/%$MONTH%-%$DAY%-%$YEAR%.log
+/var/log/sendtosplunk/switches/%HOSTNAME%/%$MONTH%-%$DAY%-%$YEAR%.log
 ** Double-check to make sure the file(s) are being populated with firewall events before proceeding
 
-1. Create a new Data Input (Settings->Data Inputs->Files & Directories->New Local File & Directory)
-2. Navigate the file system menu to the appropriate files to monitor
-3. Be sure to specify "cisco:asa" as the Sourcetype and the appropriate Index you need the data to go to.
-Or manually edit the inputs.conf file by copying it from default to local folder
 
-**Splunk Heavy Forwarder Configuration to accept UDP syslog from the ASA:**
+1. Navigate to $SPLUNK_HOME/etc/apps/Splunk_TA_cisco-asa
+2. Create a new folder, local
+3. Copy props.conf from Splunk_TA_cisco-asa/default to Splunk_TA_cisco-asa/local
+4. Navigate to Splunk_TA_cisco-asa/local
+5. Create a new file, inputs.conf
+6. Copy and edit the following inputs.conf code:
+
+
+.. code-block:: bash
+
+    [monitor:///var/log/sendtosplunk/firewalls/.../asa.log]
+    disabled = false
+    index=<your index for firewall data>
+    sourcetype = cisco:asa
+    ## Optional parameters ##
+    # host_segment = 5
+    # whitelist = *.log
+    # If you have multiple Firewalls within a single folder
+    # recursive = true
+
+More info on how to configure the Monitor function: https://docs.splunk.com/Documentation/Splunk/8.2.1/Data/Monitorfilesanddirectorieswithinputs.conf
+
+**2. Splunk Heavy Forwarder Configuration to accept UDP syslog from the ASA:**
 1. Create a new Data Input (Settings->Data Inputs->UDP->Create New Input)
 2. Be sure to specify "cisco:asa" as the Sourcetype and the appropriate Index you need the data to go to.
 2. Navigate to $SPLUNK_HOME/etc/apps/Splunk_TA_cisco-asa
 3. Create a new folder, local
 4. Copy Splunk_TA_cisco-asa/default/props.conf to Splunk_TA_cisco-asa/local
-5. Edit Splunk_TA_cisco-asa/local/props.conf
-6. 
 
-props.conf
-SEDCMD
 
-Cisco Firepower "compression"
+**How to configure props.conf to use SEDCMD** 
+
+
+.. code-block:: powershell
+
+   [cisco:asa]
+   # Looks for 8.8.* (8.8.8.8 and 8.8.4.4) specifically
+   SEDCMD-remove-legit-google-dns-ip-traffic = s/.*?8\.8\..*//
+   # Looks for specific IPs (10.25.34.251 and 1.1.1.1) and Google DNS IPs
+   SEDCMD-remove-legit-vetted-dns-ip-traffic = s/(.*?8\.8\..*|.*?10\.25\.34\.251.*|.*?1\.1\.1\.1.*)//
+
+The latter SEDCMD RegEx would work better if you have a definitive list of IPs.
+Apply one of the examples above as needed.
+To see what it is doing and test your own RegEx: https://regex101.com/r/Af9ol8/1
+
+Additionally, you can add more SEDCMD to the same sourcetype and add more to different sourcetypes as needed.
+
+**Dealing with "trash" data within your syslog events**
+
+Cisco FirePower logs contain multiple "zero" hex values that look something like this "0x0000000000000000000000000000" within a single event.  Multiply that by millions of events per day and will add up very quickly.  Assuming it is 20 characters long, that's roughly 20bytes, times the number of times within a single event times the number of events per day, it could be a few hundred precious megabytes saved.  Looking at Cisco's Firepower documentation this hex value doesn't seem to have any real... value.
+
+You will have to find the correct string and replace it below in the SEDCMD in BOTH sourcetypes.
+Copy TA-estreamer/default/props.conf to TA-estreamer/local
+
+Edit TA-estreamer/local/props.conf (NOTE: the actual hex value is this example is WRONG, find the right one first!!)
+
+.. code-block:: powershell
+
+   [cisco:firepower:data]
+   # Looks globally for "0x0000000000000000000" and replaces it with "0"
+   SEDCMD-compress-zero-hex-value-data = s/0x0000000000000000000/0/g
+   
+   # Looks globally for "0x0000000000000000000" and replaces it with "0"
+   [cisco:firepower:syslog]
+   SEDCMD-compress-zero-hex-value-syslog = s/0x0000000000000000000/0/g
+
+
 
 
 
 ..............................................................................................................................
+=========================================
+Issues, Requests, Help
+=========================================
 
+This doc should get most people on the right path, but if you have further questions please contact your Splunk Sales Engineer first.  Else, post in the "Issues" section of this repo.
 
-Default port is 9997
+Further examples may be published in this repo, but not in this doc, so click on Watch, slap that like button and subscribe for more!
 
-Example
-
-
-.. code-block:: bash
-
-    RECEIVING_INDEXER="10.1.13.60:9997"
-
-.. code-block:: bash
-
-    RECEIVING_INDEXER="splunk-idx02.yourdomain.com:9997"
-
-
-Splunk Username and Password
-..............................................................................................................................
-
-Some admins do not want to put passwords into a command or script or as Plain Text.  To avoid doing so, use ``GENRANDOMPASSWORD=1``
-Additionally, you can increase the complexity of the password with the following.
-
-
-.. code-block:: bash
-
-    MINPASSWORDLEN=16
-    
-    MINPASSWORDDIGITLE=4
-    
-    MINPASSWORDLOWERCASELEN=4
-    
-    MINPASSWORDUPPERCASELEN=4
-    
-    MINPASSWORDSPECIALCHARLEN=4
-    
-The installer writes the credentials to ``%TEMP%\splunk.log``.  Open the file in a text editor such as Notepad and ``CTRL+F`` PASSWORD
-
-
-For the ``SPLUNKUSERNAME`` you can use any username you wish
-
-.. code-block:: bash
-
-    SPLUNKUSERNAME=splunker
-
-====================================================================================================================================================================
-Example msiexec command. 
-====================================================================================================================================================================
-
-**Splunk On-Prem w/ All-In-One Splunk Server**
-Replace the DEPLOYEMENT_SERVER and RECEIVING_INDEXER with the respective IP or FQDN and respective port numbers.
-
-.. code-block:: powershell
-
-  msiexec.exe /i splunkforwarder-file.msi AGREETOLICENSE=Yes DEPLOYMENT_SERVER="192.168.10.51:8089" RECEIVING_INDEXER="192.168.1.51:9997" LAUNCHSPLUNK=1 SERVICESTARTTYPE=auto SPLUNKUSERNAME=admin GENRANDOMPASSWORD=1 MINPASSWORDLEN=16  MINPASSWORDDIGITLEN=4 MINPASSWORDLOWERCASELEN=4 MINPASSWORDUPPERCASELEN=4 MINPASSWORDSPECIALCHARLEN=4  /quiet /L*v uf-install-logfile.txt
-
-
-**Splunk On-Prem w/ Indexer Cluster** or **Splunk Cloud Customer**
-
-.. code-block:: powershell
-
-  msiexec.exe /i splunkforwarder-file.msi AGREETOLICENSE=Yes DEPLOYMENT_SERVER="192.168.10.51:8089" LAUNCHSPLUNK=1 SERVICESTARTTYPE=auto SPLUNKUSERNAME=admin GENRANDOMPASSWORD=1 MINPASSWORDLEN=16  MINPASSWORDDIGITLEN=4 MINPASSWORDLOWERCASELEN=4 MINPASSWORDUPPERCASELEN=4 MINPASSWORDSPECIALCHARLEN=4  /quiet /L*v uf-install-logfile.txt
-
-
-
-
-
-Splunk UF Windows Static Configuration Documentation: https://docs.splunk.com/Documentation/Forwarder/latest/Forwarder/InstallaWindowsuniversalforwarderfromthecommandline#List_of_supported_flags
-
-Basic Troubleshooting steps:
-
-1. If the install fails, make sure you're running the command with admin/elevated rights: Run as Administrator
-
-2. The MSI command drops a log file, check that for errors. Drag and Drop that into Splunk for faster searching and troubleshooting.
 
 
 =========================================
