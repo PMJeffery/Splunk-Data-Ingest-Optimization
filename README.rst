@@ -392,11 +392,3 @@ Issues, Requests, Help
 This doc should get most people on the right path, but if you have further questions please contact your Splunk Sales Engineer first.  Else, post in the "Issues" section of this repo.
 
 Further examples may be published in this repo, but not in this doc, so click on Watch, slap that like button and subscribe for more!
-
-
-
-=========================================
-Credits
-=========================================
-- Dylan Simmers
-- Paul Jeffery
