@@ -1,5 +1,5 @@
 =========================================
-Splunk Data Ingest Reduction
+Splunk Data Ingest Optimization
 =========================================
 
 Read this document in its entirely before proceeding to reduce data ingest.
